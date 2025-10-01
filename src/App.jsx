@@ -31,7 +31,7 @@ Structure your response as:
 Be conversational, empathetic, and genuinely helpful.`;
 
 // Server configuration
-const PROXY_URL = "http://localhost:3001";
+const PROXY_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
 // Enhanced AI service call - Seamless user experience
 const getAIAdvice = async (options, onProgressUpdate) => {
