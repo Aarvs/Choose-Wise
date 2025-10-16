@@ -1,3 +1,4 @@
+import { SYSTEM_PROMPT } from "./utils/prompts";
 import React, { useState, useEffect } from "react";
 import {
   Plus,
@@ -13,46 +14,15 @@ import {
 } from "lucide-react";
 import axios from "axios";
 
-// Constants
-const SYSTEM_PROMPT = `You are a world-class decision mentor AI, the core intelligence of the "Choose-Wise" app. Your sole purpose is to help users make better decisions by providing a single, wise, and well-reasoned recommendation. You are empathetic, insightful, and deeply committed to the user's best interest.
-
-**Core Directive: Analyze and Recommend ONE Option**
-
-1. **Anchor in the User's Values:** The user's own words are your foundation. Meticulously analyze the options and, most importantly, the reasons (pros and cons) they provide. These reasons are a direct window into their values, fears, and priorities (e.g., "worried about cost" reveals a value of financial security; "exciting new field" reveals a value of growth). Your final recommendation **must** be anchored in what matters most to the user.
-2. **Enrich with Objective Insight:** In parallel, you will always conduct an objective, real-world analysis of the options. Consider factors like long-term viability, market trends, practical realities, and hidden opportunities or risks. This external knowledge is not meant to override the user's values, but to add critical context. For example, you can use it to confirm if a user's "pro" is supported by data, or to gently introduce a "con" they may have overlooked.
-3. **Synthesize and Select a Single Best Path:** Integrate the user's subjective values with your objective analysis to choose **one and only one** option to recommend. This is a critical constraint. Do not hedge, suggest multiple options are good, or present a balanced view. Your task is to have a conviction based on the thoughtful synthesis of their world and the real world.
-4. **Handle Low-Input Scenarios:**
-    - **No Reasons Provided:** If a user lists options with no reasons, your objective analysis becomes the primary driver. Infer the most likely decision criteria, state your assumptions, and make your recommendation based on your external knowledge.
-    - **"Gut Pick" Request:** If the user asks for a "gut pick" or "random choice," do not be random. Perform a rapid, intelligent analysis using your external knowledge to determine the most broadly advantageous option and present it as an "educated gut feeling," briefly explaining the logic.
-
-**Response Structure and Tone**
-
-You must generate your response using the following structure precisely.
-
-- **Tone:** Your voice is that of a wise, calm, and caring mentor. It is reassuring, clear, and confident. Avoid robotic, overly formal, or generic language. Speak directly to the user ("you," "your").
-- **Structure:**
-    
-    **Recommendation:**[Bold the single recommended option name here]
-    
-    **My Reasoning:**
-    Start with a clear, one-sentence summary of why this is the best choice for them. Then, in a concise paragraph, explain your reasoning. Seamlessly weave together the user's own pros and cons with your objective insights. For example: "You mentioned you're excited about the growth in this field, and you're right—current market data shows a 15% increase in demand for this skill, making it a solid long-term bet."
-    
-    **Things to Consider:**
-    In a brief paragraph or a few bullet points, offer one or two additional insights or practical considerations related to the chosen path, drawn from your objective analysis. This could be a potential challenge to prepare for or an unexpected benefit they haven't mentioned.
-    
-    **Your Next Step:**
-    Provide a single, clear, and actionable next step the user can take to move forward with the decision. This makes the advice practical and empowering.`;
-
 // Server configuration
 const PROXY_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
 // Enhanced AI service call - Seamless user experience
-const getAIAdvice = async (options, onProgressUpdate) => {
+const getAIAdvice = async (options, onProgressUpdate, abortSignal) => {
   if (!options || options.length < 2) {
     throw new Error("Please provide at least 2 options to compare.");
   }
 
-  // Format the user's options for analysis
   let prompt = "I need help deciding between these options:\n\n";
 
   options.forEach((option, index) => {
@@ -63,9 +33,7 @@ const getAIAdvice = async (options, onProgressUpdate) => {
     prompt += "\n";
   });
 
-
   try {
-    // Show progress to user
     onProgressUpdate && onProgressUpdate("Analyzing your options...");
 
     const response = await axios.post(
@@ -75,37 +43,32 @@ const getAIAdvice = async (options, onProgressUpdate) => {
         systemPrompt: SYSTEM_PROMPT,
       },
       {
-        timeout: 120000, // 120 second timeout for complex analysis
+        timeout: 60000, // ✅ Reduced to 60 seconds
         headers: {
           'Content-Type': 'application/json'
-        }
+        },
+        signal: abortSignal // ✅ Add abort signal
       }
     );
 
-    // Show final progress step
     onProgressUpdate && onProgressUpdate("Finalizing recommendation...");
-
-    // Small delay to show completion
     await new Promise((resolve) => setTimeout(resolve, 800));
 
-    if (response.data.service){
-      console.log(`✅ Response from: ${response.data.service}`);
-      console.log(`📊 Completeness: ${response.data.completeness}`);
-      console.log(`⏱️ Duration: ${response.data.duration}ms`);
-    }
     return {
       response: response.data.response,
       timestamp: response.data.timestamp,
       metadata: {
-        service: response.data.service,
-        completeness: response.data.completeness,
-        duration: response.data.duration
+        service: response.data.service
       }
     };
   } catch (error) {
+    if (error.name === 'CanceledError') {
+      throw error;
+    }
+    
     console.error("AI Service Error:", error);
 
-    // Provide user-friendly error messages without technical details
+    // User-friendly error messages
     if (error.response?.status === 401) {
       throw new Error("Service configuration issue. Please contact support.");
     } else if (error.response?.status === 429) {
@@ -116,7 +79,7 @@ const getAIAdvice = async (options, onProgressUpdate) => {
       );
     } else if (error.code === "ECONNABORTED") {
       throw new Error(
-        "Analysis is taking longer than expected. Please try with shorter option descriptions."
+        "Request timeout. Please try with shorter descriptions."
       );
     } else if (error.response?.data?.error) {
       throw new Error(error.response.data.error);
@@ -240,9 +203,8 @@ const OptionInput = ({ option, index, onChange, onRemove, canRemove }) => {
       <input
         type="text"
         className="input-field"
-        placeholder={`e.g., ${
-          index === 0 ? "Take the new job offer" : "Stay in current position"
-        }`}
+        placeholder={`e.g., ${index === 0 ? "Take the new job offer" : "Stay in current position"
+          }`}
         value={option.text}
         onChange={(e) => handleOptionChange("text", e.target.value)}
       />
@@ -250,11 +212,10 @@ const OptionInput = ({ option, index, onChange, onRemove, canRemove }) => {
       <label className="label">Your thoughts (optional):</label>
       <textarea
         className="textarea-field"
-        placeholder={`e.g., ${
-          index === 0
+        placeholder={`e.g., ${index === 0
             ? "Better salary but longer commute..."
             : "Comfortable but limited growth..."
-        }`}
+          }`}
         value={option.reason}
         onChange={(e) => handleOptionChange("reason", e.target.value)}
       />
@@ -374,7 +335,7 @@ const App = () => {
     // Periodically check connection (but don't show errors to user)
     const statusInterval = setInterval(() => {
       checkServerConnection();
-    }, 30000);
+    }, 120000);
 
     return () => clearInterval(statusInterval);
   }, []);
@@ -417,6 +378,9 @@ const App = () => {
     setShowResult(false);
     updateLoadingMessage("Preparing your request...");
 
+    // ✅ Create abort controller for request cancellation
+    const abortController = new AbortController();
+
     try {
       // Validate inputs
       const validOptions = options.filter((opt) => opt.text && opt.text.trim());
@@ -427,9 +391,13 @@ const App = () => {
       // Check server connection if we know it's down
       if (serverStatus === "disconnected") {
         try {
-          await axios.get(`${PROXY_URL}/health`, { timeout: 3000 });
+          await axios.get(`${PROXY_URL}/health`, {
+            timeout: 3000,
+            signal: abortController.signal
+          });
           setServerStatus("connected");
         } catch (connectionError) {
+          if (connectionError.name === 'CanceledError') return;
           throw new Error(
             "Cannot connect to advice service. Please check your internet connection and try again."
           );
@@ -437,21 +405,28 @@ const App = () => {
       }
 
       updateLoadingMessage("Analyzing your options...");
-      await new Promise((resolve) => setTimeout(resolve, 300)); // Small delay for UX
+      await new Promise((resolve) => setTimeout(resolve, 300));
 
-      // Get AI advice with progress updates
-      const advice = await getAIAdvice(validOptions, updateLoadingMessage);
+      // ✅ Get AI advice with abort signal
+      const advice = await getAIAdvice(
+        validOptions,
+        updateLoadingMessage,
+        abortController.signal
+      );
 
       setResult(advice);
       setShowResult(true);
       scrollToResult();
     } catch (err) {
+      if (err.name === 'CanceledError') {
+        console.log('Request cancelled');
+        return;
+      }
       console.error("Error getting advice:", err);
       setError(
         err.message || "Unable to get advice right now. Please try again."
       );
 
-      // Update server status if it's a connection error
       if (err.message.includes("Cannot connect")) {
         setServerStatus("disconnected");
       }
@@ -459,6 +434,11 @@ const App = () => {
       setIsLoading(false);
       updateLoadingMessage("Analyzing...");
     }
+
+    // ✅ Cleanup function
+    return () => {
+      abortController.abort();
+    };
   };
 
   const handleRandomChoice = () => {
